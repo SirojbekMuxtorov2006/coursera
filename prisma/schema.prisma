@@ -1,0 +1,288 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── ENUMS ───────────────────────────────────────────────
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum CourseLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum PurchaseType {
+  ONE_TIME
+  SUBSCRIPTION
+}
+
+enum SubscriptionPlan {
+  FREE
+  MONTHLY
+  YEARLY
+}
+
+enum NotificationType {
+  COURSE_UPDATE
+  PAYMENT
+  SYSTEM
+  ACHIEVEMENT
+}
+
+// ─── USER ────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  password      String?
+  image         String?
+  role          Role      @default(USER)
+  bio           String?
+  emailVerified DateTime?
+
+  // Auth
+  accounts Account[]
+  sessions Session[]
+
+  // Relations
+  enrollments   Enrollment[]
+  reviews       Review[]
+  progress      LessonProgress[]
+  courses       Course[]          @relation("CourseAuthor")
+  purchases     Purchase[]
+  subscription  Subscription?
+  notifications Notification[]
+  certificates  Certificate[]
+  comments      Comment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─── COURSE ──────────────────────────────────────────────
+
+model Course {
+  id          String      @id @default(cuid())
+  title       String
+  slug        String      @unique
+  description String      @db.Text
+  shortDesc   String?
+  thumbnail   String?
+  price       Float       @default(0)
+  isFree      Boolean     @default(true)
+  isPublished Boolean     @default(false)
+  level       CourseLevel @default(BEGINNER)
+  category    String?
+  tags        String[]
+
+  authorId String
+  author   User   @relation("CourseAuthor", fields: [authorId], references: [id])
+
+  sections    Section[]
+  enrollments Enrollment[]
+  reviews     Review[]
+  purchases   Purchase[]
+  certificates Certificate[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Section {
+  id       String @id @default(cuid())
+  title    String
+  position Int
+
+  courseId String
+  course  Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  lessons Lesson[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Lesson {
+  id          String  @id @default(cuid())
+  title       String
+  description String? @db.Text
+  videoUrl    String?
+  content     String? @db.Text
+  duration    Int?    // duration in seconds
+  position    Int
+  isFree      Boolean @default(false)
+
+  sectionId String
+  section   Section @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  progress LessonProgress[]
+  comments Comment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── PROGRESS & ENROLLMENT ───────────────────────────────
+
+model Enrollment {
+  id String @id @default(cuid())
+
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, courseId])
+}
+
+model LessonProgress {
+  id        String  @id @default(cuid())
+  completed Boolean @default(false)
+  watchedAt DateTime?
+
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lessonId String
+  lesson   Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, lessonId])
+}
+
+// ─── REVIEWS & COMMENTS ─────────────────────────────────
+
+model Review {
+  id      String @id @default(cuid())
+  rating  Int
+  comment String? @db.Text
+
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, courseId])
+}
+
+model Comment {
+  id      String @id @default(cuid())
+  content String @db.Text
+
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lessonId String
+  lesson   Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  parentId String?
+  parent   Comment?  @relation("CommentReplies", fields: [parentId], references: [id])
+  replies  Comment[] @relation("CommentReplies")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── PAYMENTS ────────────────────────────────────────────
+
+model Purchase {
+  id            String       @id @default(cuid())
+  amount        Float
+  purchaseType  PurchaseType
+  stripePaymentId String?
+
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+}
+
+model Subscription {
+  id               String           @id @default(cuid())
+  plan             SubscriptionPlan @default(FREE)
+  stripeCustomerId String?
+  stripeSubId      String?
+  currentPeriodEnd DateTime?
+  cancelAtPeriodEnd Boolean         @default(false)
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── CERTIFICATES ────────────────────────────────────────
+
+model Certificate {
+  id          String @id @default(cuid())
+  certificateUrl String?
+
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  issuedAt DateTime @default(now())
+
+  @@unique([userId, courseId])
+}
+
+// ─── NOTIFICATIONS ───────────────────────────────────────
+
+model Notification {
+  id      String           @id @default(cuid())
+  type    NotificationType
+  title   String
+  message String
+  read    Boolean          @default(false)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+}
