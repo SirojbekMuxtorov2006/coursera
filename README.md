@@ -1,36 +1,137 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Coursa — Modern Programming Course Platform
+
+A full-stack SaaS programming course platform built with Next.js, TypeScript, TailwindCSS, Prisma, and Stripe. Inspired by Udemy + Coursera, optimized for solo creators and small teams.
+
+## Tech Stack
+
+- **Frontend:** Next.js 16 (App Router), TypeScript, TailwindCSS v4, Shadcn/UI, Framer Motion
+- **Backend:** Next.js API Routes, Prisma ORM
+- **Database:** PostgreSQL
+- **Auth:** NextAuth.js (JWT + Google OAuth)
+- **Payments:** Stripe (one-time + subscriptions)
+- **Storage:** Cloudinary / AWS S3 (for videos & thumbnails)
+
+## Features
+
+- User registration/login (credentials + Google OAuth)
+- Browse & search courses with filters
+- Video player with lesson progress tracking
+- Course sections with ordered lessons
+- Rating & reviews system
+- Threaded comments on lessons
+- Stripe checkout (one-time purchase + monthly/yearly subscription)
+- User dashboard with enrolled courses & progress
+- Admin panel (overview, course CRUD, user management, revenue)
+- Dark/Light mode with glassmorphism UI
+- AI coding assistant chatbot
+- In-browser JavaScript code playground
+- Certificate generation on course completion
+- Notification system
+- Fully responsive & SEO optimized
+
+## Project Structure
+
+```
+coursa/
+├── prisma/
+│   └── schema.prisma          # Database schema (15 models)
+├── src/
+│   ├── app/
+│   │   ├── (main)/            # Public pages (landing, courses, dashboard)
+│   │   ├── admin/             # Admin panel (overview, courses, users)
+│   │   ├── auth/              # Login & register pages
+│   │   ├── api/               # API routes
+│   │   │   ├── auth/          # NextAuth + register
+│   │   │   ├── courses/       # Course CRUD
+│   │   │   ├── progress/      # Lesson progress tracking
+│   │   │   ├── checkout/      # Stripe checkout
+│   │   │   ├── certificates/  # Certificate generation
+│   │   │   └── webhook/       # Stripe webhooks
+│   │   ├── globals.css        # Theme variables (light/dark)
+│   │   └── layout.tsx         # Root layout with providers
+│   ├── components/
+│   │   ├── ui/                # Reusable UI (Button, Card, Badge, etc.)
+│   │   ├── layout/            # Navbar, Footer
+│   │   ├── providers/         # Theme & Session providers
+│   │   └── course/            # Code playground, AI chatbot
+│   └── lib/
+│       ├── auth.ts            # NextAuth config
+│       ├── db.ts              # Prisma client
+│       ├── stripe.ts          # Stripe client
+│       └── utils.ts           # Utility functions
+├── .env.example               # Environment variables template
+└── prisma.config.ts           # Prisma 7 config
+```
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
+
+- Node.js 18+
+- PostgreSQL database
+- Stripe account (for payments)
+- Google Cloud project (for OAuth)
+
+### 1. Clone & Install
+
+```bash
+git clone <your-repo>
+cd coursa
+npm install
+```
+
+### 2. Environment Variables
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with your actual credentials:
+
+```env
+DATABASE_URL="postgresql://USER:PASSWORD@localhost:5432/coursa?schema=public"
+NEXTAUTH_SECRET="generate-a-random-secret"
+NEXTAUTH_URL="http://localhost:3000"
+GOOGLE_CLIENT_ID="your-google-client-id"
+GOOGLE_CLIENT_SECRET="your-google-client-secret"
+STRIPE_SECRET_KEY="sk_test_..."
+STRIPE_PUBLISHABLE_KEY="pk_test_..."
+STRIPE_WEBHOOK_SECRET="whsec_..."
+NEXT_PUBLIC_APP_URL="http://localhost:3000"
+```
+
+### 3. Database Setup
+
+```bash
+npx prisma migrate dev --name init
+npx prisma generate
+```
+
+### 4. Run Development Server
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 5. Stripe Webhooks (local)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+stripe listen --forward-to localhost:3000/api/webhook/stripe
+```
 
-## Learn More
+## Deployment
 
-To learn more about Next.js, take a look at the following resources:
+Deploy to Vercel:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npx vercel
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Set all environment variables in the Vercel dashboard.
 
-## Deploy on Vercel
+## License
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+MIT
+# coursera
