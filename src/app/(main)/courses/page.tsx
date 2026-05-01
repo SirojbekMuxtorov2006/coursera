@@ -1,8 +1,4 @@
-"use client";
-
-import { useState } from "react";
 import Link from "next/link";
-import { motion } from "framer-motion";
 import {
   Search,
   Star,
@@ -13,7 +9,6 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -22,186 +17,153 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { db } from "@/lib/db";
+import { formatDuration, formatPrice } from "@/lib/utils";
 
-const allCourses = [
-  {
-    id: "1",
-    slug: "fullstack-web-dev",
-    title: "Full-Stack Web Development with React & Node.js",
-    description: "Build modern web apps from scratch with the MERN stack.",
-    price: 49.99,
-    rating: 4.8,
-    students: 12400,
-    level: "Intermediate",
-    category: "Web Development",
-    author: "John Doe",
-    lessons: 48,
-  },
-  {
-    id: "2",
-    slug: "python-data-science",
-    title: "Python for Data Science & Machine Learning",
-    description:
-      "Master Python, Pandas, NumPy, and build ML models from scratch.",
-    price: 59.99,
-    rating: 4.9,
-    students: 8900,
-    level: "Beginner",
-    category: "Data Science",
-    author: "Jane Smith",
-    lessons: 62,
-  },
-  {
-    id: "3",
-    slug: "advanced-typescript",
-    title: "Advanced TypeScript & Design Patterns",
-    description:
-      "Level up your TypeScript skills with real-world design patterns.",
-    price: 0,
-    rating: 4.7,
-    students: 5600,
-    level: "Advanced",
-    category: "Programming",
-    author: "Alex Johnson",
-    lessons: 35,
-  },
-  {
-    id: "4",
-    slug: "react-native-mobile",
-    title: "React Native: Build Mobile Apps",
-    description: "Create cross-platform mobile apps with React Native and Expo.",
-    price: 39.99,
-    rating: 4.6,
-    students: 7200,
-    level: "Intermediate",
-    category: "Mobile Development",
-    author: "Maria Garcia",
-    lessons: 40,
-  },
-  {
-    id: "5",
-    slug: "devops-docker-k8s",
-    title: "DevOps with Docker & Kubernetes",
-    description: "Master containerization, orchestration, and CI/CD pipelines.",
-    price: 69.99,
-    rating: 4.8,
-    students: 4300,
-    level: "Advanced",
-    category: "DevOps",
-    author: "David Kim",
-    lessons: 55,
-  },
-  {
-    id: "6",
-    slug: "nextjs-masterclass",
-    title: "Next.js 14 Complete Masterclass",
-    description:
-      "Build production-ready apps with Next.js, Server Components, and more.",
-    price: 0,
-    rating: 4.9,
-    students: 9800,
-    level: "Intermediate",
-    category: "Web Development",
-    author: "Sarah Wilson",
-    lessons: 72,
-  },
-];
+function fmtLevel(level: "BEGINNER" | "INTERMEDIATE" | "ADVANCED") {
+  if (level === "BEGINNER") return "Beginner";
+  if (level === "INTERMEDIATE") return "Intermediate";
+  return "Advanced";
+}
 
-const categories = [
-  "All",
-  "Web Development",
-  "Data Science",
-  "Programming",
-  "Mobile Development",
-  "DevOps",
-];
-const levels = ["All", "Beginner", "Intermediate", "Advanced"];
+export default async function CoursesPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const sp = await searchParams;
+  const search = typeof sp.search === "string" ? sp.search : undefined;
+  const category = typeof sp.category === "string" ? sp.category : undefined;
+  const level = typeof sp.level === "string" ? sp.level : undefined;
 
-export default function CoursesPage() {
-  const [search, setSearch] = useState("");
-  const [category, setCategory] = useState("All");
-  const [level, setLevel] = useState("All");
+  const courses = await db.course.findMany({
+    where: {
+      isPublished: true,
+      ...(category && category !== "All" ? { category } : {}),
+      ...(level && level !== "All"
+        ? { level: level as "BEGINNER" | "INTERMEDIATE" | "ADVANCED" }
+        : {}),
+      ...(search
+        ? {
+            OR: [
+              { title: { contains: search, mode: "insensitive" } },
+              { description: { contains: search, mode: "insensitive" } },
+            ],
+          }
+        : {}),
+    },
+    include: {
+      author: { select: { name: true } },
+      sections: { include: { lessons: { select: { duration: true } } } },
+      reviews: { select: { rating: true } },
+      _count: { select: { enrollments: true } },
+    },
+    orderBy: { createdAt: "desc" },
+  });
 
-  const filtered = allCourses.filter((c) => {
-    const matchSearch =
-      c.title.toLowerCase().includes(search.toLowerCase()) ||
-      c.description.toLowerCase().includes(search.toLowerCase());
-    const matchCategory = category === "All" || c.category === category;
-    const matchLevel = level === "All" || c.level === level;
-    return matchSearch && matchCategory && matchLevel;
+  const formatted = courses.map((course) => {
+    const totalLessons = course.sections.reduce((acc, s) => acc + s.lessons.length, 0);
+    const totalDuration = course.sections.reduce(
+      (acc, s) => acc + s.lessons.reduce((a, l) => a + (l.duration || 0), 0),
+      0
+    );
+    const averageRating =
+      course.reviews.length > 0
+        ? course.reviews.reduce((a, r) => a + r.rating, 0) / course.reviews.length
+        : 0;
+
+    return {
+      id: course.id,
+      slug: course.slug,
+      title: course.title,
+      description: course.shortDesc || course.description.slice(0, 140),
+      price: course.price,
+      isFree: course.isFree,
+      rating: averageRating,
+      students: course._count.enrollments,
+      level: fmtLevel(course.level),
+      category: course.category || "General",
+      author: course.author.name || "Creator",
+      lessons: totalLessons,
+      duration: formatDuration(totalDuration),
+    };
   });
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12">
       {/* Header */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="mb-10"
-      >
+      <div className="mb-10">
         <h1 className="text-3xl md:text-4xl font-bold">Browse Courses</h1>
         <p className="text-muted-foreground mt-2">
-          Discover {allCourses.length}+ courses to boost your skills
+          Discover {formatted.length}+ courses to boost your skills
         </p>
-      </motion.div>
+      </div>
 
-      {/* Filters */}
+      {/* Filters (server-rendered, querystring-driven) */}
       <div className="flex flex-col md:flex-row gap-4 mb-8">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search courses..."
-            className="pl-10 h-12"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+          <form>
+            <input
+              name="search"
+              defaultValue={search || ""}
+              placeholder="Search courses..."
+              className="w-full pl-10 h-12 rounded-md border bg-background px-3 text-sm shadow-sm"
+            />
+          </form>
         </div>
         <div className="flex gap-2 flex-wrap">
-          {categories.map((c) => (
-            <Button
-              key={c}
-              variant={category === c ? "default" : "outline"}
-              size="sm"
-              onClick={() => setCategory(c)}
-              className={
-                category === c
-                  ? "bg-violet-600 hover:bg-violet-700"
-                  : ""
-              }
-            >
-              {c}
-            </Button>
-          ))}
+          {["All", "Web Development", "Data Science", "Programming", "Mobile Development", "DevOps"].map(
+            (c) => (
+              <Link
+                key={c}
+                href={{
+                  pathname: "/courses",
+                  query: { ...(search ? { search } : {}), category: c, ...(level ? { level } : {}) },
+                }}
+              >
+                <Button
+                  variant={category === c || (!category && c === "All") ? "default" : "outline"}
+                  size="sm"
+                  className={
+                    category === c || (!category && c === "All")
+                      ? "bg-violet-600 hover:bg-violet-700"
+                      : ""
+                  }
+                >
+                  {c}
+                </Button>
+              </Link>
+            )
+          )}
         </div>
       </div>
 
       <div className="flex gap-2 mb-8 flex-wrap">
         <SlidersHorizontal className="h-4 w-4 mt-1.5 text-muted-foreground" />
-        {levels.map((l) => (
-          <Button
+        {["All", "Beginner", "Intermediate", "Advanced"].map((l) => (
+          <Link
             key={l}
-            variant={level === l ? "secondary" : "ghost"}
-            size="sm"
-            onClick={() => setLevel(l)}
+            href={{
+              pathname: "/courses",
+              query: { ...(search ? { search } : {}), ...(category ? { category } : {}), level: l },
+            }}
           >
-            {l}
-          </Button>
+            <Button variant={level === l || (!level && l === "All") ? "secondary" : "ghost"} size="sm">
+              {l}
+            </Button>
+          </Link>
         ))}
       </div>
 
       {/* Results */}
       <p className="text-sm text-muted-foreground mb-6">
-        Showing {filtered.length} course{filtered.length !== 1 && "s"}
+        Showing {formatted.length} course{formatted.length !== 1 && "s"}
       </p>
 
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filtered.map((course, i) => (
-          <motion.div
-            key={course.id}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.05 }}
-          >
+        {formatted.map((course, i) => (
+          <div key={course.id}>
             <Link href={`/courses/${course.slug}`}>
               <Card className="group hover:shadow-xl hover:shadow-violet-500/5 hover:-translate-y-1 transition-all duration-300 overflow-hidden h-full">
                 <div className="relative aspect-video bg-gradient-to-br from-violet-600/20 to-indigo-600/20 flex items-center justify-center">
@@ -214,7 +176,7 @@ export default function CoursesPage() {
                   <Badge className="absolute top-3 left-3" variant="secondary">
                     {course.category}
                   </Badge>
-                  {course.price === 0 && (
+                  {course.isFree && (
                     <Badge className="absolute top-3 right-3" variant="success">
                       Free
                     </Badge>
@@ -227,7 +189,7 @@ export default function CoursesPage() {
                     </Badge>
                     <div className="flex items-center gap-1">
                       <Star className="h-3.5 w-3.5 fill-yellow-500 text-yellow-500" />
-                      {course.rating}
+                      {course.rating ? course.rating.toFixed(1) : "—"}
                     </div>
                     <span className="flex items-center gap-1">
                       <Users className="h-3.5 w-3.5" />
@@ -241,23 +203,23 @@ export default function CoursesPage() {
                 </CardHeader>
                 <CardFooter className="flex items-center justify-between mt-auto">
                   <div className="text-sm text-muted-foreground">
-                    {course.lessons} lessons
+                    {course.lessons} lessons • {course.duration}
                   </div>
                   <div className="text-lg font-bold">
-                    {course.price === 0 ? (
+                    {course.isFree ? (
                       <span className="text-emerald-500">Free</span>
                     ) : (
-                      `$${course.price}`
+                      formatPrice(course.price)
                     )}
                   </div>
                 </CardFooter>
               </Card>
             </Link>
-          </motion.div>
+          </div>
         ))}
       </div>
 
-      {filtered.length === 0 && (
+      {formatted.length === 0 && (
         <div className="text-center py-20">
           <Filter className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
           <h3 className="text-lg font-medium">No courses found</h3>

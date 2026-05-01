@@ -1,16 +1,38 @@
-import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { requireUser } from "@/lib/server-auth";
+import { getCourseEntitlement } from "@/lib/entitlements";
+import { zProgressUpsertBody } from "@/lib/validators";
+import { errorToResponse, jsonError, jsonOk } from "@/lib/http";
 
 export async function POST(req: Request) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const session = await requireUser();
+
+    const parsed = zProgressUpsertBody.safeParse(await req.json());
+    if (!parsed.success) {
+      return jsonError("Invalid request", 400, { issues: parsed.error.issues });
     }
 
-    const { lessonId, completed } = await req.json();
+    const { lessonId, completed } = parsed.data;
+
+    const lesson = await db.lesson.findUnique({
+      where: { id: lessonId },
+      select: {
+        id: true,
+        isFree: true,
+        section: { select: { courseId: true, course: { select: { isFree: true } } } },
+      },
+    });
+
+    if (!lesson) return jsonError("Lesson not found", 404);
+
+    const courseId = lesson.section.courseId;
+    const entitlement = await getCourseEntitlement({
+      userId: session.user.id,
+      courseId,
+      lessonId,
+    });
+    if (!entitlement.entitled) return jsonError("Forbidden", 403);
 
     const progress = await db.lessonProgress.upsert({
       where: {
@@ -31,32 +53,29 @@ export async function POST(req: Request) {
       },
     });
 
-    return NextResponse.json(progress);
+    return jsonOk(progress);
   } catch (error) {
     console.error("Progress update error:", error);
-    return NextResponse.json(
-      { error: "Failed to update progress" },
-      { status: 500 }
-    );
+    return errorToResponse(error);
   }
 }
 
 export async function GET(req: Request) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const session = await requireUser();
 
     const { searchParams } = new URL(req.url);
     const courseId = searchParams.get("courseId");
 
     if (!courseId) {
-      return NextResponse.json(
-        { error: "courseId is required" },
-        { status: 400 }
-      );
+      return jsonError("courseId is required", 400);
     }
+
+    const entitlement = await getCourseEntitlement({
+      userId: session.user.id,
+      courseId,
+    });
+    if (!entitlement.entitled) return jsonError("Forbidden", 403);
 
     const course = await db.course.findUnique({
       where: { id: courseId },
@@ -68,7 +87,7 @@ export async function GET(req: Request) {
     });
 
     if (!course) {
-      return NextResponse.json({ error: "Course not found" }, { status: 404 });
+      return jsonError("Course not found", 404);
     }
 
     const lessonIds = course.sections.flatMap((s) =>
@@ -85,7 +104,7 @@ export async function GET(req: Request) {
     const completedCount = progress.filter((p) => p.completed).length;
     const totalLessons = lessonIds.length;
 
-    return NextResponse.json({
+    return jsonOk({
       progress,
       completedCount,
       totalLessons,
@@ -93,9 +112,6 @@ export async function GET(req: Request) {
     });
   } catch (error) {
     console.error("Progress fetch error:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch progress" },
-      { status: 500 }
-    );
+    return errorToResponse(error);
   }
 }

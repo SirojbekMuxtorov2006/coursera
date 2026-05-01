@@ -45,35 +45,32 @@ export function AIChatbot() {
     setInput("");
     setIsLoading(true);
 
-    // Simulated AI response (replace with real API call)
-    setTimeout(() => {
-      const responses: Record<string, string> = {
-        default:
-          "That's a great question! To get a proper AI response, connect this component to your preferred AI API (OpenAI, Anthropic, etc.). For now, I can help with general guidance — try asking about specific programming concepts!",
-        react:
-          "React is a JavaScript library for building user interfaces. Key concepts include Components, JSX, Props, State, and Hooks. Would you like me to explain any of these in detail?",
-        typescript:
-          "TypeScript adds static type checking to JavaScript. It helps catch errors at compile time and provides better IDE support. Key features include interfaces, generics, enums, and type guards.",
-        nextjs:
-          "Next.js is a React framework that provides server-side rendering, static site generation, API routes, and more. It uses a file-based routing system and supports both client and server components.",
-      };
-
-      const lowerInput = userMessage.content.toLowerCase();
-      let response = responses.default;
-      if (lowerInput.includes("react")) response = responses.react;
-      if (lowerInput.includes("typescript") || lowerInput.includes("ts"))
-        response = responses.typescript;
-      if (lowerInput.includes("next")) response = responses.nextjs;
+    try {
+      const res = await fetch("/api/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: userMessage.content }),
+      });
+      const data = (await res.json()) as { reply?: string; error?: string };
 
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
-        content: response,
+        content: data.reply || data.error || "Something went wrong.",
       };
-
       setMessages((prev) => [...prev, assistantMessage]);
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: (Date.now() + 1).toString(),
+          role: "assistant",
+          content: "Network error. Please try again.",
+        },
+      ]);
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
   };
 
   return (

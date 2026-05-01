@@ -1,8 +1,4 @@
-"use client";
-
-import { useSession } from "next-auth/react";
 import { redirect } from "next/navigation";
-import { motion } from "framer-motion";
 import Link from "next/link";
 import {
   BookOpen,
@@ -24,74 +20,121 @@ import {
 } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
+import { db } from "@/lib/db";
+import { requireUser } from "@/lib/server-auth";
 import { getInitials } from "@/lib/utils";
 
-const enrolledCourses = [
-  {
-    id: "1",
-    slug: "fullstack-web-dev",
-    title: "Full-Stack Web Development",
-    author: "John Doe",
-    progress: 42,
-    totalLessons: 48,
-    completedLessons: 20,
-    lastAccessed: "2 hours ago",
-    category: "Web Development",
-  },
-  {
-    id: "2",
-    slug: "python-data-science",
-    title: "Python for Data Science",
-    author: "Jane Smith",
-    progress: 15,
-    totalLessons: 62,
-    completedLessons: 9,
-    lastAccessed: "1 day ago",
-    category: "Data Science",
-  },
-  {
-    id: "3",
-    slug: "advanced-typescript",
-    title: "Advanced TypeScript",
-    author: "Alex Johnson",
-    progress: 100,
-    totalLessons: 35,
-    completedLessons: 35,
-    lastAccessed: "3 days ago",
-    category: "Programming",
-  },
-];
+function relativeTime(d?: Date | null) {
+  if (!d) return "—";
+  const diff = Date.now() - d.getTime();
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
 
-const statsData = [
-  { label: "Enrolled Courses", value: "3", icon: BookOpen, color: "text-violet-500" },
-  { label: "Hours Learned", value: "47", icon: Clock, color: "text-blue-500" },
-  { label: "Certificates", value: "1", icon: Award, color: "text-emerald-500" },
-  { label: "Current Streak", value: "12 days", icon: TrendingUp, color: "text-orange-500" },
-];
+export default async function DashboardPage() {
+  const session = await requireUser().catch(() => null);
+  if (!session) redirect("/auth/login");
 
-export default function DashboardPage() {
-  const { data: session, status } = useSession();
+  const [enrollments, certificates] = await Promise.all([
+    db.enrollment.findMany({
+      where: { userId: session.user.id },
+      include: {
+        course: {
+          include: {
+            author: { select: { name: true } },
+            sections: { include: { lessons: { select: { id: true, duration: true } } } },
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+    db.certificate.findMany({
+      where: { userId: session.user.id },
+      select: { id: true },
+    }),
+  ]);
 
-  if (status === "loading") {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-violet-500 border-t-transparent" />
-      </div>
+  const courseLessonIds = enrollments.map((e) => ({
+    courseId: e.courseId,
+    lessonIds: e.course.sections.flatMap((s) => s.lessons.map((l) => l.id)),
+  }));
+
+  const allLessonIds = courseLessonIds.flatMap((x) => x.lessonIds);
+  const progressRows = await db.lessonProgress.findMany({
+    where: { userId: session.user.id, lessonId: { in: allLessonIds } },
+    select: { lessonId: true, completed: true, watchedAt: true },
+  });
+
+  const progressByLessonId = new Map(progressRows.map((p) => [p.lessonId, p]));
+
+  const enrolledCourses = enrollments.map((enrollment) => {
+    const lessonIds = enrollment.course.sections.flatMap((s) => s.lessons.map((l) => l.id));
+    const totalLessons = lessonIds.length;
+    const completedLessons = lessonIds.filter((id) => progressByLessonId.get(id)?.completed).length;
+    const progress = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
+    const lastWatchedAt = lessonIds
+      .map((id) => progressByLessonId.get(id)?.watchedAt)
+      .filter(Boolean)
+      .sort((a, b) => (a!.getTime() > b!.getTime() ? -1 : 1))[0];
+
+    return {
+      id: enrollment.course.id,
+      slug: enrollment.course.slug,
+      title: enrollment.course.title,
+      author: enrollment.course.author.name || "Creator",
+      progress,
+      totalLessons,
+      completedLessons,
+      lastAccessed: relativeTime(lastWatchedAt),
+      category: enrollment.course.category || "General",
+    };
+  });
+
+  const totalMinutesLearned = enrollments.reduce((acc, e) => {
+    const lessonIds = e.course.sections.flatMap((s) => s.lessons.map((l) => l.id));
+    const completedLessonIds = lessonIds.filter((id) => progressByLessonId.get(id)?.completed);
+    const durationByLessonId = new Map(
+      e.course.sections.flatMap((s) => s.lessons.map((l) => [l.id, l.duration || 0] as const))
     );
-  }
+    const seconds = completedLessonIds.reduce((s, id) => s + (durationByLessonId.get(id) || 0), 0);
+    return acc + Math.round(seconds / 60);
+  }, 0);
 
-  if (!session) {
-    redirect("/auth/login");
-  }
+  const statsData = [
+    {
+      label: "Enrolled Courses",
+      value: String(enrolledCourses.length),
+      icon: BookOpen,
+      color: "text-violet-500",
+    },
+    {
+      label: "Minutes Learned",
+      value: String(totalMinutesLearned),
+      icon: Clock,
+      color: "text-blue-500",
+    },
+    {
+      label: "Certificates",
+      value: String(certificates.length),
+      icon: Award,
+      color: "text-emerald-500",
+    },
+    {
+      label: "Current Streak",
+      value: "—",
+      icon: TrendingUp,
+      color: "text-orange-500",
+    },
+  ];
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12">
       {/* Welcome Header */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-10"
-      >
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-10">
         <div className="flex items-center gap-4">
           <Avatar className="h-16 w-16 ring-2 ring-violet-500/30">
             <AvatarImage src={session.user?.image || ""} />
@@ -113,15 +156,10 @@ export default function DashboardPage() {
             Browse Courses <ArrowRight className="h-4 w-4" />
           </Button>
         </Link>
-      </motion.div>
+      </div>
 
       {/* Stats */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.1 }}
-        className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10"
-      >
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
         {statsData.map((stat) => (
           <Card key={stat.label}>
             <CardContent className="p-6">
@@ -137,14 +175,10 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
         ))}
-      </motion.div>
+      </div>
 
       {/* Enrolled Courses */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2 }}
-      >
+      <div>
         <h2 className="text-xl font-semibold mb-4">My Courses</h2>
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
           {enrolledCourses.map((course) => (
@@ -194,7 +228,7 @@ export default function DashboardPage() {
             </Link>
           ))}
         </div>
-      </motion.div>
+      </div>
     </div>
   );
 }

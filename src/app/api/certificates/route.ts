@@ -1,16 +1,15 @@
-import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { requireUser } from "@/lib/server-auth";
+import { zCertificateCreateBody } from "@/lib/validators";
+import { errorToResponse, jsonCreated, jsonError, jsonOk } from "@/lib/http";
 
 export async function POST(req: Request) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const session = await requireUser();
 
-    const { courseId } = await req.json();
+    const parsed = zCertificateCreateBody.safeParse(await req.json());
+    if (!parsed.success) return jsonError("Invalid request", 400, { issues: parsed.error.issues });
+    const { courseId } = parsed.data;
 
     // Check if enrolled
     const enrollment = await db.enrollment.findUnique({
@@ -20,10 +19,7 @@ export async function POST(req: Request) {
     });
 
     if (!enrollment) {
-      return NextResponse.json(
-        { error: "Not enrolled in this course" },
-        { status: 403 }
-      );
+      return jsonError("Not enrolled in this course", 403);
     }
 
     // Check completion
@@ -37,7 +33,7 @@ export async function POST(req: Request) {
     });
 
     if (!course) {
-      return NextResponse.json({ error: "Course not found" }, { status: 404 });
+      return jsonError("Course not found", 404);
     }
 
     const lessonIds = course.sections.flatMap((s) =>
@@ -53,27 +49,33 @@ export async function POST(req: Request) {
     });
 
     if (completedLessons < lessonIds.length) {
-      return NextResponse.json(
+      return jsonError(
         {
-          error: "Course not completed",
+          message: "Course not completed",
           completed: completedLessons,
           total: lessonIds.length,
         },
-        { status: 400 }
+        400
       );
     }
 
-    // Generate certificate (placeholder URL - integrate with PDF generation)
     const certificate = await db.certificate.upsert({
       where: {
         userId_courseId: { userId: session.user.id, courseId },
       },
-      update: {},
+      update: {
+        certificateUrl: null,
+      },
       create: {
         userId: session.user.id,
         courseId,
-        certificateUrl: `/api/certificates/${session.user.id}/${courseId}/pdf`,
+        certificateUrl: null,
       },
+    });
+
+    await db.certificate.update({
+      where: { id: certificate.id },
+      data: { certificateUrl: `/api/certificates/${certificate.id}/pdf` },
     });
 
     // Create notification
@@ -86,22 +88,19 @@ export async function POST(req: Request) {
       },
     });
 
-    return NextResponse.json(certificate, { status: 201 });
+    return jsonCreated({
+      ...certificate,
+      certificateUrl: `/api/certificates/${certificate.id}/pdf`,
+    });
   } catch (error) {
     console.error("Certificate generation error:", error);
-    return NextResponse.json(
-      { error: "Failed to generate certificate" },
-      { status: 500 }
-    );
+    return errorToResponse(error);
   }
 }
 
 export async function GET() {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const session = await requireUser();
 
     const certificates = await db.certificate.findMany({
       where: { userId: session.user.id },
@@ -111,12 +110,14 @@ export async function GET() {
       orderBy: { issuedAt: "desc" },
     });
 
-    return NextResponse.json(certificates);
+    return jsonOk(
+      certificates.map((c) => ({
+        ...c,
+        certificateUrl: c.certificateUrl || `/api/certificates/${c.id}/pdf`,
+      }))
+    );
   } catch (error) {
     console.error("Certificates fetch error:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch certificates" },
-      { status: 500 }
-    );
+    return errorToResponse(error);
   }
 }

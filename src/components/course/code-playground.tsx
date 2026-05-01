@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import { Play, RotateCcw, Copy, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { loadPyodide } from "pyodide";
 
 interface CodePlaygroundProps {
   defaultCode?: string;
@@ -18,6 +19,8 @@ export function CodePlayground({
   const [output, setOutput] = useState<string[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [pyodideReady, setPyodideReady] = useState(false);
+  const [pyodideLoading, setPyodideLoading] = useState(false);
 
   const runCode = useCallback(async () => {
     setIsRunning(true);
@@ -41,14 +44,38 @@ export function CodePlayground({
         console.log = originalLog;
         setOutput(logs);
       } else {
-        setOutput([
-          "Python execution requires a backend service.",
-          "Connect Pyodide or a Python API for browser execution.",
-        ]);
+        setPyodideLoading(true);
+        const py = await loadPyodide({
+          indexURL: "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/",
+        });
+        setPyodideReady(true);
+
+        // capture stdout
+        const out: string[] = [];
+        py.setStdout({
+          batched: (s: string) => {
+            if (s.trim().length) out.push(s.trimEnd());
+          },
+        });
+        py.setStderr({
+          batched: (s: string) => {
+            if (s.trim().length) out.push(`Error: ${s.trimEnd()}`);
+          },
+        });
+
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+          await py.runPythonAsync(code);
+        } catch (err) {
+          out.push(`Error: ${err instanceof Error ? err.message : String(err)}`);
+        }
+
+        setOutput(out.length ? out : ["(no output)"]);
       }
     } catch (err) {
       setOutput([`Error: ${err instanceof Error ? err.message : String(err)}`]);
     } finally {
+      setPyodideLoading(false);
       setIsRunning(false);
     }
   }, [code, language]);
@@ -77,6 +104,11 @@ export function CodePlayground({
           <span className="text-xs text-muted-foreground font-mono ml-2">
             {language === "javascript" ? "script.js" : "script.py"}
           </span>
+          {language === "python" && (
+            <span className="text-xs text-muted-foreground ml-2">
+              {pyodideLoading ? "Loading Python..." : pyodideReady ? "Pyodide ready" : "Pyodide"}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="sm" onClick={copyCode} className="h-7 gap-1.5">

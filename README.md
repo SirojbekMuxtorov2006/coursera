@@ -71,6 +71,7 @@ coursa/
 - PostgreSQL database
 - Stripe account (for payments)
 - Google Cloud project (for OAuth)
+- Cloudinary account (for video + thumbnails uploads)
 
 ### 1. Clone & Install
 
@@ -97,7 +98,14 @@ GOOGLE_CLIENT_SECRET="your-google-client-secret"
 STRIPE_SECRET_KEY="sk_test_..."
 STRIPE_PUBLISHABLE_KEY="pk_test_..."
 STRIPE_WEBHOOK_SECRET="whsec_..."
+STRIPE_MONTHLY_PRICE_ID="price_..."
+STRIPE_YEARLY_PRICE_ID="price_..."
+CLOUDINARY_CLOUD_NAME="..."
+CLOUDINARY_API_KEY="..."
+CLOUDINARY_API_SECRET="..."
+CLOUDINARY_FOLDER="coursa"
 NEXT_PUBLIC_APP_URL="http://localhost:3000"
+OPENAI_API_KEY="optional"
 ```
 
 ### 3. Database Setup
@@ -120,6 +128,15 @@ Open [http://localhost:3000](http://localhost:3000).
 ```bash
 stripe listen --forward-to localhost:3000/api/webhook/stripe
 ```
+
+## Admin
+
+- Visit `"/admin"` (requires an `ADMIN` user).
+- Create a course at `"/admin/courses/new"`, then add sections/lessons at `"/admin/courses/:id/edit"`.
+
+## Certificates
+
+- Certificates are issued via `POST /api/certificates` when all lessons are completed.\n- PDF download: `GET /api/certificates/:certificateId/pdf`
 
 ## Deployment
 

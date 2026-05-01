@@ -6,8 +6,12 @@ import Stripe from "stripe";
 
 export async function POST(req: Request) {
   const body = await req.text();
-  const headersList = await headers();
-  const signature = headersList.get("Stripe-Signature") as string;
+  const headersList = headers();
+  const signature = headersList.get("Stripe-Signature");
+
+  if (!signature) {
+    return NextResponse.json({ error: "Missing Stripe-Signature" }, { status: 400 });
+  }
 
   let event: Stripe.Event;
 
@@ -22,56 +26,73 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
   }
 
-  const session = event.data.object as Stripe.Checkout.Session;
+  // Stripe may send many event shapes; narrow where needed.
 
-  // One-time purchase completed
-  if (event.type === "checkout.session.completed" && session.metadata?.type === "one-time") {
-    const userId = session.metadata.userId;
-    const courseId = session.metadata.courseId;
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object as Stripe.Checkout.Session;
 
-    await db.purchase.create({
-      data: {
-        userId,
-        courseId,
-        amount: (session.amount_total || 0) / 100,
-        purchaseType: "ONE_TIME",
-        stripePaymentId: session.payment_intent as string,
-      },
-    });
+    // One-time purchase completed
+    if (session.metadata?.type === "one-time") {
+      const userId = session.metadata.userId;
+      const courseId = session.metadata.courseId;
+      const stripePaymentId = session.payment_intent as string | null;
 
-    await db.enrollment.upsert({
-      where: { userId_courseId: { userId, courseId } },
-      update: {},
-      create: { userId, courseId },
-    });
-  }
+      if (!userId || !courseId || !stripePaymentId) {
+        return NextResponse.json({ received: true });
+      }
 
-  // Subscription created
-  if (event.type === "checkout.session.completed" && session.metadata?.type === "subscription") {
-    const userId = session.metadata.userId;
-    const plan = session.metadata.plan === "yearly" ? "YEARLY" : "MONTHLY";
+      const existing = await db.purchase.findFirst({
+        where: { stripePaymentId },
+        select: { id: true },
+      });
 
-    const subResponse = await stripe.subscriptions.retrieve(
-      session.subscription as string
-    );
-    const sub = subResponse as unknown as Stripe.Subscription;
+      if (!existing) {
+        await db.purchase.create({
+          data: {
+            userId,
+            courseId,
+            amount: (session.amount_total || 0) / 100,
+            purchaseType: "ONE_TIME",
+            stripePaymentId,
+          },
+        });
+      }
 
-    await db.subscription.upsert({
-      where: { userId },
-      update: {
-        plan: plan as "MONTHLY" | "YEARLY",
-        stripeCustomerId: session.customer as string,
-        stripeSubId: sub.id,
-        currentPeriodEnd: new Date(((sub as unknown as Record<string, number>)["current_period_end"]) * 1000),
-      },
-      create: {
-        userId,
-        plan: plan as "MONTHLY" | "YEARLY",
-        stripeCustomerId: session.customer as string,
-        stripeSubId: sub.id,
-        currentPeriodEnd: new Date(((sub as unknown as Record<string, number>)["current_period_end"]) * 1000),
-      },
-    });
+      await db.enrollment.upsert({
+        where: { userId_courseId: { userId, courseId } },
+        update: {},
+        create: { userId, courseId },
+      });
+    }
+
+    // Subscription created
+    if (session.metadata?.type === "subscription") {
+      const userId = session.metadata.userId;
+      const plan = session.metadata.plan === "yearly" ? "YEARLY" : "MONTHLY";
+
+      if (!userId) return NextResponse.json({ received: true });
+
+      const sub = await stripe.subscriptions.retrieve(session.subscription as string);
+
+      await db.subscription.upsert({
+        where: { userId },
+        update: {
+          plan: plan as "MONTHLY" | "YEARLY",
+          stripeCustomerId: session.customer as string,
+          stripeSubId: sub.id,
+          currentPeriodEnd: new Date(sub.current_period_end * 1000),
+          cancelAtPeriodEnd: Boolean(sub.cancel_at_period_end),
+        },
+        create: {
+          userId,
+          plan: plan as "MONTHLY" | "YEARLY",
+          stripeCustomerId: session.customer as string,
+          stripeSubId: sub.id,
+          currentPeriodEnd: new Date(sub.current_period_end * 1000),
+          cancelAtPeriodEnd: Boolean(sub.cancel_at_period_end),
+        },
+      });
+    }
   }
 
   // Subscription canceled
@@ -81,6 +102,24 @@ export async function POST(req: Request) {
     await db.subscription.updateMany({
       where: { stripeSubId: subscription.id },
       data: { plan: "FREE", cancelAtPeriodEnd: true },
+    });
+  }
+
+  // Subscription updated (e.g. renewals, cancel_at_period_end changes)
+  if (event.type === "customer.subscription.updated") {
+    const subscription = event.data.object as Stripe.Subscription;
+    const plan =
+      subscription.status === "active" || subscription.status === "trialing"
+        ? "MONTHLY"
+        : "FREE";
+
+    await db.subscription.updateMany({
+      where: { stripeSubId: subscription.id },
+      data: {
+        plan: plan as "MONTHLY" | "FREE",
+        currentPeriodEnd: new Date(subscription.current_period_end * 1000),
+        cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end),
+      },
     });
   }
 

@@ -1,17 +1,18 @@
-import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
 import { stripe } from "@/lib/stripe";
 import { db } from "@/lib/db";
+import { requireUser } from "@/lib/server-auth";
+import { zCheckoutBody } from "@/lib/validators";
+import { errorToResponse, jsonError, jsonOk } from "@/lib/http";
 
 export async function POST(req: Request) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const session = await requireUser();
 
-    const { courseId, priceType } = await req.json();
+    const parsed = zCheckoutBody.safeParse(await req.json());
+    if (!parsed.success) {
+      return jsonError("Invalid request", 400, { issues: parsed.error.issues });
+    }
+    const { courseId, priceType } = parsed.data;
 
     // One-time course purchase
     if (priceType === "one-time" && courseId) {
@@ -20,10 +21,19 @@ export async function POST(req: Request) {
       });
 
       if (!course) {
-        return NextResponse.json(
-          { error: "Course not found" },
-          { status: 404 }
-        );
+        return jsonError("Course not found", 404);
+      }
+
+      if (course.isFree || course.price <= 0) {
+        return jsonError("This course is free", 400);
+      }
+
+      const alreadyEnrolled = await db.enrollment.findUnique({
+        where: { userId_courseId: { userId: session.user.id, courseId: course.id } },
+        select: { id: true },
+      });
+      if (alreadyEnrolled) {
+        return jsonError("You already own this course", 409);
       }
 
       const checkoutSession = await stripe.checkout.sessions.create({
@@ -52,7 +62,7 @@ export async function POST(req: Request) {
         cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/courses/${course.slug}?canceled=true`,
       });
 
-      return NextResponse.json({ url: checkoutSession.url });
+      return jsonOk({ url: checkoutSession.url });
     }
 
     // Subscription
@@ -61,6 +71,10 @@ export async function POST(req: Request) {
         priceType === "monthly"
           ? process.env.STRIPE_MONTHLY_PRICE_ID
           : process.env.STRIPE_YEARLY_PRICE_ID;
+
+      if (!priceId) {
+        return jsonError("Stripe price is not configured", 500);
+      }
 
       const checkoutSession = await stripe.checkout.sessions.create({
         mode: "subscription",
@@ -76,15 +90,12 @@ export async function POST(req: Request) {
         cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/pricing?canceled=true`,
       });
 
-      return NextResponse.json({ url: checkoutSession.url });
+      return jsonOk({ url: checkoutSession.url });
     }
 
-    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+    return jsonError("Invalid request", 400);
   } catch (error) {
     console.error("Checkout error:", error);
-    return NextResponse.json(
-      { error: "Failed to create checkout session" },
-      { status: 500 }
-    );
+    return errorToResponse(error);
   }
 }

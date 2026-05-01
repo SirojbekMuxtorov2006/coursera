@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Plus,
@@ -19,50 +19,41 @@ import {
   CardContent,
 } from "@/components/ui/card";
 
-const coursesData = [
-  {
-    id: "1",
-    title: "Full-Stack Web Development",
-    category: "Web Development",
-    students: 12400,
-    revenue: "$608,000",
-    status: "published",
-    price: 49.99,
-  },
-  {
-    id: "2",
-    title: "Python Data Science",
-    category: "Data Science",
-    students: 8900,
-    revenue: "$534,000",
-    status: "published",
-    price: 59.99,
-  },
-  {
-    id: "3",
-    title: "Advanced TypeScript",
-    category: "Programming",
-    students: 5600,
-    revenue: "Free",
-    status: "published",
-    price: 0,
-  },
-  {
-    id: "4",
-    title: "Rust for Beginners",
-    category: "Programming",
-    students: 0,
-    revenue: "$0",
-    status: "draft",
-    price: 39.99,
-  },
-];
+type AdminCourseRow = {
+  id: string;
+  title: string;
+  category: string | null;
+  price: number;
+  isFree: boolean;
+  isPublished: boolean;
+  enrollments: number;
+};
 
 export default function AdminCoursesPage() {
   const [search, setSearch] = useState("");
+  const [courses, setCourses] = useState<AdminCourseRow[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const filtered = coursesData.filter((c) =>
-    c.title.toLowerCase().includes(search.toLowerCase())
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      const res = await fetch("/api/admin/courses");
+      const data = (await res.json()) as AdminCourseRow[];
+      if (!cancelled) {
+        setCourses(Array.isArray(data) ? data : []);
+        setLoading(false);
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const filtered = useMemo(
+    () => courses.filter((c) => c.title.toLowerCase().includes(search.toLowerCase())),
+    [courses, search]
   );
 
   return (
@@ -76,10 +67,12 @@ export default function AdminCoursesPage() {
           <h1 className="text-2xl font-bold">Courses</h1>
           <p className="text-muted-foreground">Manage your courses</p>
         </div>
-        <Button variant="gradient" className="gap-2">
-          <Plus className="h-4 w-4" />
-          Create Course
-        </Button>
+        <a href="/admin/courses/new">
+          <Button variant="gradient" className="gap-2">
+            <Plus className="h-4 w-4" />
+            Create Course
+          </Button>
+        </a>
       </motion.div>
 
       {/* Search */}
@@ -124,6 +117,13 @@ export default function AdminCoursesPage() {
                 </tr>
               </thead>
               <tbody>
+                {loading && (
+                  <tr>
+                    <td className="p-4 text-sm text-muted-foreground" colSpan={7}>
+                      Loading...
+                    </td>
+                  </tr>
+                )}
                 {filtered.map((course) => (
                   <tr
                     key={course.id}
@@ -134,17 +134,17 @@ export default function AdminCoursesPage() {
                     </td>
                     <td className="p-4">
                       <Badge variant="secondary" className="text-xs">
-                        {course.category}
+                        {course.category || "General"}
                       </Badge>
                     </td>
                     <td className="p-4 text-sm">
-                      {course.students.toLocaleString()}
+                      {course.enrollments.toLocaleString()}
                     </td>
                     <td className="p-4 text-sm font-medium">
-                      {course.revenue}
+                      —
                     </td>
                     <td className="p-4">
-                      {course.status === "published" ? (
+                      {course.isPublished ? (
                         <Badge variant="success" className="gap-1">
                           <CheckCircle className="h-3 w-3" />
                           Published
@@ -157,7 +157,7 @@ export default function AdminCoursesPage() {
                       )}
                     </td>
                     <td className="p-4 text-sm">
-                      {course.price === 0 ? (
+                      {course.isFree ? (
                         <span className="text-emerald-500">Free</span>
                       ) : (
                         `$${course.price}`
@@ -165,16 +165,25 @@ export default function AdminCoursesPage() {
                     </td>
                     <td className="p-4">
                       <div className="flex items-center justify-end gap-1">
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
-                          <Edit className="h-4 w-4" />
-                        </Button>
+                        <a href={`/courses/${course.id}`}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                        </a>
+                        <a href={`/admin/courses/${course.id}/edit`}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                        </a>
                         <Button
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-red-500 hover:text-red-600"
+                          onClick={async () => {
+                            if (!confirm("Delete this course?")) return;
+                            await fetch(`/api/admin/courses/${course.id}`, { method: "DELETE" });
+                            setCourses((prev) => prev.filter((c) => c.id !== course.id));
+                          }}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
